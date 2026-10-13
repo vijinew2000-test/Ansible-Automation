@@ -1,0 +1,66 @@
+---
+- name: Check existing Zabbix installation on Windows
+  hosts: all
+  gather_facts: false
+  become: false
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: basic
+    ansible_winrm_server_cert_validation: ignore
+
+  tasks:
+    - name: Find Zabbix services and installation details
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+
+        $services = @(Get-CimInstance Win32_Service |
+          Where-Object {
+            $_.Name -like '*Zabbix*' -or
+            $_.DisplayName -like '*Zabbix*'
+          })
+
+        Write-Output "Windows hostname: $env:COMPUTERNAME"
+
+        if ($services.Count -eq 0) {
+          Write-Output "No Zabbix Windows service found."
+        }
+
+        foreach ($service in $services) {
+          Write-Output ""
+          Write-Output "Zabbix service found"
+          Write-Output "Name: $($service.Name)"
+          Write-Output "Display name: $($service.DisplayName)"
+          Write-Output "Status: $($service.State)"
+          Write-Output "Startup: $($service.StartMode)"
+          Write-Output "Service account: $($service.StartName)"
+          Write-Output "Executable / arguments: $($service.PathName)"
+        }
+
+        $config = 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf'
+        $exe = 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe'
+
+        Write-Output ""
+        Write-Output "Agent 2 executable exists: $(Test-Path -LiteralPath $exe)"
+
+        if (Test-Path -LiteralPath $exe) {
+          Write-Output "Executable path: $exe"
+          Write-Output "File version: $((Get-Item -LiteralPath $exe).VersionInfo.FileVersion)"
+        }
+
+        if (Test-Path -LiteralPath $config) {
+          Write-Output "Configuration found: $config"
+          Select-String -LiteralPath $config `
+            -Pattern '^\s*(Server|ServerActive|Hostname)\s*=',
+                     '^\s*UserParameter\s*=\s*uladmin\.OSVersion,' |
+            ForEach-Object { Write-Output $_.Line }
+        } else {
+          Write-Output "Agent 2 config not found at the expected path: $config"
+        }
+      register: zabbix_check
+      changed_when: false
+
+    - name: Display Zabbix discovery results
+      ansible.builtin.debug:
+        var: zabbix_check.stdout_lines
