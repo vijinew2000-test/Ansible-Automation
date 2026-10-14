@@ -107,3 +107,45 @@ Restart Zabbix Agent 2
         ↓
 Verify service, version, configuration, port, and custom metric
 ```
+
+
+## Final installation and configuration playbook
+
+The state-changing playbook is:
+
+```text
+install-configure-zabbix-agent2.yml
+```
+
+It performs the following operations in batches of five Windows hosts:
+
+1. Validates `Server`, `ServerActive`, and `Hostname`.
+2. Downloads the pinned Zabbix Agent 2 version `7.0.31` MSI.
+3. Installs or upgrades the agent quietly without restarting Windows.
+4. Confirms the executable and configuration file exist.
+5. Creates a one-time configuration backup.
+6. Updates `Server`, `ServerActive`, and `Hostname` without duplicate entries.
+7. Adds or updates the `uladmin.OSVersion` UserParameter.
+8. Restarts Agent 2 only when configuration changes.
+9. Ensures the service starts automatically and is running.
+10. Verifies the agent version, custom OS metric, and service state.
+
+The committed `10.10.10.10` value is an example. Replace it or override `zabbix_server` from the Unity One inventory before execution.
+
+Syntax check:
+
+```bash
+ansible-playbook -i inventory/hosts.yml \
+  use-cases/windows/zabbix-agent2-installation/install-configure-zabbix-agent2.yml \
+  --syntax-check
+```
+
+Run against one test host first:
+
+```bash
+ansible-playbook -i inventory/hosts.yml \
+  use-cases/windows/zabbix-agent2-installation/install-configure-zabbix-agent2.yml \
+  --limit WINDOWS_TEST_HOST
+```
+
+Only after the test host passes installation, configuration, metric, and service validation should the playbook be allowed to continue to additional hosts.
