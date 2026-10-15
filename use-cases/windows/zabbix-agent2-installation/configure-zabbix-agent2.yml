@@ -1,0 +1,242 @@
+---
+- name: Install and configure Zabbix Agent 2 on Windows
+  hosts: windows
+  gather_facts: true
+  serial: 5
+  become: false
+
+  vars:
+    # Pin the approved Agent 2 release.
+    zabbix_agent_version: "7.0.31"
+    zabbix_agent2_download_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.0/7.0.31/zabbix_agent2-7.0.31-windows-amd64-openssl.msi"
+    zabbix_agent2_local_path: 'C:\Windows\Temp\zabbix_agent2-7.0.31.msi'
+
+    zabbix_config: 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf'
+    zabbix_agent_exe: 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe'
+    zabbix_service_name: 'Zabbix Agent 2'
+
+    zabbix_metric_script_dir: 'C:\Program Files\Zabbix Agent 2\scripts'
+    zabbix_metric_script: 'C:\Program Files\Zabbix Agent 2\scripts\Get-OSVersion.ps1'
+
+    # Replace with the client's approved server/proxy addresses.
+    # Example: "10.192.18.54,10.192.18.31"
+    zabbix_server: "REPLACE_WITH_CLIENT_ZABBIX_SERVER_OR_PROXY_IP"
+    zabbix_server_active: "{{ zabbix_server }}"
+
+    # Defaults to the Windows computer name.
+    # Override if the registered Zabbix host name differs.
+    zabbix_hostname: "{{ ansible_hostname }}"
+
+  tasks:
+    - name: Validate deployment inputs
+      ansible.builtin.assert:
+        that:
+          - zabbix_server | length > 0
+          - "'REPLACE_WITH' not in zabbix_server"
+          - zabbix_server_active | length > 0
+          - zabbix_hostname | length > 0
+          - "'" not in zabbix_server"
+          - "'" not in zabbix_server_active"
+          - "'" not in zabbix_hostname"
+        fail_msg: >-
+          Set the approved Zabbix Server, ServerActive and Hostname
+          values before running this playbook.
+
+    - name: Ensure Windows Temp directory exists
+      ansible.windows.win_file:
+        path: 'C:\Windows\Temp'
+        state: directory
+
+    - name: Download Zabbix Agent 2 MSI
+      ansible.windows.win_get_url:
+        url: "{{ zabbix_agent2_download_url }}"
+        dest: "{{ zabbix_agent2_local_path }}"
+        force: false
+
+    - name: Install or upgrade Zabbix Agent 2
+      ansible.windows.win_package:
+        path: "{{ zabbix_agent2_local_path }}"
+        arguments: '/quiet /norestart /log C:\Windows\Temp\zabbix_agent2_install.log'
+        state: present
+
+    - name: Verify agent executable and configuration exist
+      ansible.windows.win_stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ zabbix_agent_exe }}"
+        - "{{ zabbix_config }}"
+      register: zabbix_required_files
+
+    - name: Stop if required files are missing
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Required file is missing: {{ item.item }}"
+      loop: "{{ zabbix_required_files.results }}"
+
+    - name: Create OS version metric script and configure agent
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+
+          $ConfigPath = '{{ zabbix_config }}'
+          $ScriptDir = '{{ zabbix_metric_script_dir }}'
+          $ScriptPath = '{{ zabbix_metric_script }}'
+          $Server = '{{ zabbix_server }}'
+          $ServerActive = '{{ zabbix_server_active }}'
+          $Hostname = '{{ zabbix_hostname }}'
+
+          # Create the standalone metric script.
+          New-Item -Path $ScriptDir -ItemType Directory -Force |
+              Out-Null
+
+          $MetricScriptContent = @'
+          $ErrorActionPreference = "Stop"
+          $os = Get-ItemProperty -LiteralPath "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          Write-Output "$($os.CurrentBuild).$($os.UBR)"
+          '@
+
+          $ScriptChanged = $true
+
+          if (Test-Path -LiteralPath $ScriptPath) {
+              $ExistingScript = [System.IO.File]::ReadAllText($ScriptPath).Trim()
+              if ($ExistingScript -ceq $MetricScriptContent.Trim()) {
+                  $ScriptChanged = $false
+              }
+          }
+
+          if ($ScriptChanged) {
+              Set-Content -LiteralPath $ScriptPath `
+                  -Value $MetricScriptContent -Encoding ASCII
+          }
+
+          # Keep a backup of the original agent configuration.
+          $BackupPath = "$ConfigPath.unityone-backup"
+          if (-not (Test-Path -LiteralPath $BackupPath)) {
+              Copy-Item -LiteralPath $ConfigPath -Destination $BackupPath
+          }
+
+          $Original = [System.IO.File]::ReadAllText($ConfigPath)
+          $Lines = [System.Collections.Generic.List[string]]::new()
+          Get-Content -LiteralPath $ConfigPath | ForEach-Object {
+              $Lines.Add($_)
+          }
+
+          $Settings = [ordered]@{
+              'Server'       = $Server
+              'ServerActive' = $ServerActive
+              'Hostname'     = $Hostname
+          }
+
+          foreach ($Key in $Settings.Keys) {
+              $Pattern = '^\s*#?\s*' + [regex]::Escape($Key) + '\s*='
+              $Indexes = @(
+                  for ($i = 0; $i -lt $Lines.Count; $i++) {
+                      if ($Lines[$i] -match $Pattern) { $i }
+                  }
+              )
+
+              $NewLine = "$Key=$($Settings[$Key])"
+
+              if ($Indexes.Count -eq 0) {
+                  $Lines.Add($NewLine)
+              }
+              else {
+                  $Lines[$Indexes[0]] = $NewLine
+                  for ($j = $Indexes.Count - 1; $j -ge 1; $j--) {
+                      $Lines.RemoveAt($Indexes[$j])
+                  }
+              }
+          }
+
+          $UserParameter = 'UserParameter=uladmin.OSVersion,C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\Program Files\Zabbix Agent 2\scripts\Get-OSVersion.ps1"'
+
+          $UPPattern = '^\s*#?\s*UserParameter\s*=\s*uladmin\.OSVersion\s*,'
+          $UPIndexes = @(
+              for ($i = 0; $i -lt $Lines.Count; $i++) {
+                  if ($Lines[$i] -match $UPPattern) { $i }
+              }
+          )
+
+          if ($UPIndexes.Count -eq 0) {
+              $Lines.Add($UserParameter)
+          }
+          else {
+              $Lines[$UPIndexes[0]] = $UserParameter
+              for ($j = $UPIndexes.Count - 1; $j -ge 1; $j--) {
+                  $Lines.RemoveAt($UPIndexes[$j])
+              }
+          }
+
+          $NewContent = ($Lines -join "`r`n") + "`r`n"
+          $ConfigChanged = $NewContent -cne $Original
+
+          if ($ConfigChanged) {
+              [System.IO.File]::WriteAllText(
+                  $ConfigPath,
+                  $NewContent,
+                  [System.Text.Encoding]::ASCII
+              )
+              Write-Output "Agent configuration updated."
+          }
+          else {
+              Write-Output "Agent configuration already matches."
+          }
+
+          if ($ScriptChanged) {
+              Write-Output "OS metric script created or updated."
+          }
+          else {
+              Write-Output "OS metric script already matches."
+          }
+
+          $Ansible.Changed = ($ConfigChanged -or $ScriptChanged)
+      notify: Restart Zabbix Agent 2
+
+    - name: Apply changes before validation
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure agent starts automatically and is running
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+        start_mode: auto
+        state: started
+
+    - name: Verify installed agent version
+      ansible.windows.win_command: '"{{ zabbix_agent_exe }}" --version'
+      register: zabbix_version
+      changed_when: false
+
+    - name: Test OS version metric through agent
+      ansible.windows.win_command: >-
+        "{{ zabbix_agent_exe }}"
+        -c "{{ zabbix_config }}"
+        -t uladmin.OSVersion
+      register: zabbix_os_version
+      changed_when: false
+      failed_when: >-
+        zabbix_os_version.rc != 0 or
+        ((zabbix_os_version.stdout | default('')) ~
+        (zabbix_os_version.stderr | default('')))
+        is not search('uladmin\.OSVersion\s+\[s\|\d+\.\d+\]')
+
+    - name: Verify agent service is running
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+      register: zabbix_service
+      changed_when: false
+
+    - name: Report deployment result
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ zabbix_hostname }}"
+          - "Agent version output: {{ zabbix_version.stdout | default('See installer log') }}"
+          - "OS metric: {{ zabbix_os_version.stdout | default(zabbix_os_version.stderr | default('')) }}"
+          - "Service state: {{ zabbix_service.state | default('unknown') }}"
+          - "Local configuration and metric validation passed."
+
+  handlers:
+    - name: Restart Zabbix Agent 2
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+        state: restarted
