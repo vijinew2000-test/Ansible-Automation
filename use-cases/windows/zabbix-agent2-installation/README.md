@@ -149,3 +149,46 @@ ansible-playbook -i inventory/hosts.yml \
 ```
 
 Only after the test host passes installation, configuration, metric, and service validation should the playbook be allowed to continue to additional hosts.
+
+
+## Separated OS metric script version
+
+The newer playbook is:
+
+```text
+configure-zabbix-agent2.yml
+```
+
+This version creates the reusable metric script at:
+
+```text
+C:\Program Files\Zabbix Agent 2\scripts\Get-OSVersion.ps1
+```
+
+It then adds a single `uladmin.OSVersion` UserParameter that calls the script. It also:
+
+- Rejects the placeholder Zabbix server value before making changes.
+- Avoids duplicate `Server`, `ServerActive`, `Hostname`, and UserParameter entries.
+- Keeps a one-time `.unityone-backup` of the original configuration.
+- Reports changed status only when the script or configuration differs.
+- Restarts Agent 2 through a handler only when a change occurs.
+- Tests the custom metric through the Agent 2 executable.
+- Processes Windows hosts in batches of five.
+
+Before execution, supply the approved server or proxy address through inventory or replace the placeholder.
+
+Syntax check:
+
+```bash
+ansible-playbook -i inventory/hosts.yml \
+  use-cases/windows/zabbix-agent2-installation/configure-zabbix-agent2.yml \
+  --syntax-check
+```
+
+Test one Windows host first:
+
+```bash
+ansible-playbook -i inventory/hosts.yml \
+  use-cases/windows/zabbix-agent2-installation/configure-zabbix-agent2.yml \
+  --limit WINDOWS_TEST_HOST
+```
