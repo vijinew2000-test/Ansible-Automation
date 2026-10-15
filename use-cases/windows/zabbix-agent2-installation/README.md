@@ -192,3 +192,40 @@ ansible-playbook -i inventory/hosts.yml \
   use-cases/windows/zabbix-agent2-installation/configure-zabbix-agent2.yml \
   --limit WINDOWS_TEST_HOST
 ```
+
+
+## Standalone PowerShell alternative
+
+Save the standalone Windows version as:
+
+```text
+Configure-ZabbixAgent2.ps1
+```
+
+Run it from an **elevated PowerShell session** on a Windows test VM. The script:
+
+- Installs or upgrades the pinned Zabbix Agent 2 release.
+- Creates the separate `Get-OSVersion.ps1` metric script.
+- Updates the agent configuration without duplicate entries.
+- Starts the Zabbix Agent 2 service.
+- Restarts the service only when the metric script or configuration changes.
+- Tests `uladmin.OSVersion` locally through the Agent 2 executable.
+- Stops and reports the installer log when installation validation fails.
+
+Unlike the Ansible playbook, the PowerShell script receives its deployment values as command-line parameters:
+
+| Parameter | Purpose | Default |
+|---|---|---|
+| `ZabbixServer` | Approved passive-check server or proxy address | Required |
+| `ZabbixServerActive` | Approved active-check server or proxy address | Same as `ZabbixServer` |
+| `ZabbixHostname` | Hostname registered in Zabbix | Windows computer name |
+
+Example test execution:
+
+```powershell
+.\Configure-ZabbixAgent2.ps1 `
+  -ZabbixServer "REPLACE_WITH_APPROVED_SERVER_OR_PROXY" `
+  -ZabbixHostname $env:COMPUTERNAME
+```
+
+Use the Ansible playbook for controlled multi-server deployment and the standalone PowerShell version for direct testing or one-server execution. Test on one non-production Windows VM before wider rollout.
