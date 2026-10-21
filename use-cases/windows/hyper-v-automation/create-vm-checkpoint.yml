@@ -1,0 +1,71 @@
+---
+- name: Create checkpoint for test Hyper-V VM
+  hosts: localhost
+  gather_facts: false
+  become: false
+
+  vars:
+    # Documentation-only example address. Replace at runtime.
+    hyperv_host: "192.0.2.10"
+    hyperv_user: "YOUR_HOST_USERNAME"
+    hyperv_password: "YOUR_HOST_PASSWORD"
+
+    # Target VM name as displayed by Get-VM.
+    vm_name: "win-test-01"
+
+    # WinRM connection to the Hyper-V host.
+    ansible_connection: winrm
+    ansible_host: "{{ hyperv_host }}"
+    ansible_user: "{{ hyperv_user }}"
+    ansible_password: "{{ hyperv_password }}"
+    ansible_port: 5985
+    ansible_winrm_scheme: http
+    ansible_winrm_transport: ntlm
+
+  tasks:
+    - name: Check Hyper-V host connectivity
+      ansible.windows.win_ping:
+      delegate_to: "{{ hyperv_host }}"
+
+    - name: Create timestamped VM checkpoint
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          VMName: "{{ vm_name }}"
+        script: |
+          param(
+              [string]$VMName
+          )
+
+          $vm = Get-VM -Name $VMName -ErrorAction Stop
+          $checkpointName = "Unity-$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')"
+
+          $checkpoint = Checkpoint-VM -VM $vm `
+              -SnapshotName $checkpointName `
+              -Passthru -ErrorAction Stop
+
+          $verified = Get-VMSnapshot -VM $vm -ErrorAction Stop |
+              Where-Object { $_.Id -eq $checkpoint.Id }
+
+          if ($null -eq $verified) {
+              throw "Checkpoint verification failed for VM '$VMName'."
+          }
+
+          $Ansible.Changed = $true
+          $Ansible.Result = @{
+              VM = $vm.Name
+              Checkpoint = $verified.Name
+              CreatedAt = $verified.CreationTime.ToString("yyyy-MM-dd HH:mm:ss")
+              Status = "SUCCESS"
+          }
+      delegate_to: "{{ hyperv_host }}"
+      register: checkpoint_result
+
+    - name: Display checkpoint details
+      ansible.builtin.debug:
+        msg:
+          - "Hyper-V Host : {{ hyperv_host }}"
+          - "VM           : {{ checkpoint_result.result.VM }}"
+          - "Checkpoint   : {{ checkpoint_result.result.Checkpoint }}"
+          - "Created At   : {{ checkpoint_result.result.CreatedAt }}"
+          - "Status       : {{ checkpoint_result.result.Status }}"
