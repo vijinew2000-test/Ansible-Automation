@@ -1,0 +1,24 @@
+---
+- name: Test Unity connectivity to test Hyper-V host
+  hosts: localhost
+  gather_facts: false
+  become: false
+
+  vars:
+    # Documentation-only example address. Replace at runtime.
+    hyperv_host: "192.0.2.10"
+    hyperv_user: "YOUR_HOST_USERNAME"
+    hyperv_password: "YOUR_HOST_PASSWORD"
+
+  tasks:
+    - name: Test WinRM connection to Hyper-V host
+      ansible.windows.win_ping:
+      delegate_to: "{{ hyperv_host }}"
+      vars:
+        ansible_connection: winrm
+        ansible_host: "{{ hyperv_host }}"
+        ansible_user: "{{ hyperv_user }}"
+        ansible_password: "{{ hyperv_password }}"
+        ansible_port: 5985
+        ansible_winrm_scheme: http
+        ansible_winrm_transport: ntlm
