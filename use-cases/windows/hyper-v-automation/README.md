@@ -7,14 +7,15 @@ This use case manages a Microsoft Hyper-V host from Ansible through WinRM.
 ```text
 hyper-v-automation/
 ├── README.md
-├── test-hyperv-host-connectivity.yml
-├── create-vm-checkpoint.yml
-└── list-vm-checkpoints.yml
+├── hyper-v-connection-test.yml
+├── hyper-v-checkpoint-creation.yml
+├── hyper-v-list-checkpoints.yml
+└── hyper-v-vm-checkpoint-deletion.yml
 ```
 
 ### 1. Hyper-V host connectivity test
 
-`test-hyperv-host-connectivity.yml` confirms that Ansible can authenticate to and execute a Windows module on the Hyper-V host through WinRM.
+`hyper-v-connection-test.yml` confirms that Ansible can authenticate to and execute a Windows module on the Hyper-V host through WinRM.
 
 Expected successful result:
 
@@ -26,7 +27,7 @@ This is an Ansible/WinRM connectivity test, not an ICMP network ping.
 
 ### 2. Hyper-V VM checkpoint creation
 
-`create-vm-checkpoint.yml`:
+`hyper-v-checkpoint-creation.yml`:
 
 1. Tests connectivity to the Hyper-V host.
 2. Finds the requested VM by name.
@@ -61,7 +62,7 @@ Do not store real usernames or passwords in Git. Supply them through Unity One r
 ## Test connectivity
 
 ```bash
-ansible-playbook use-cases/windows/hyper-v-automation/test-hyperv-host-connectivity.yml
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-connection-test.yml
 ```
 
 Success means the Hyper-V host is reachable and the supplied credentials are accepted.
@@ -71,7 +72,7 @@ Success means the Hyper-V host is reachable and the supplied credentials are acc
 Before execution, confirm the exact VM name and available checkpoint storage capacity.
 
 ```bash
-ansible-playbook use-cases/windows/hyper-v-automation/create-vm-checkpoint.yml
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-checkpoint-creation.yml
 ```
 
 A successful run reports a checkpoint name similar to:
@@ -91,7 +92,7 @@ Unity-20261021-143012-123
 
 ### 3. List checkpoints for a VM
 
-`list-vm-checkpoints.yml` is a read-only playbook for operators who do not log in to the Hyper-V Manager UI.
+`hyper-v-list-checkpoints.yml` is a read-only playbook for operators who do not log in to the Hyper-V Manager UI.
 
 The operator supplies the Hyper-V host connection and exact VM name. Unity returns:
 
@@ -106,7 +107,47 @@ The results are sorted from newest to oldest. The unique ID is useful for select
 Run it with:
 
 ```bash
-ansible-playbook use-cases/windows/hyper-v-automation/list-vm-checkpoints.yml
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-list-checkpoints.yml
 ```
 
 This playbook sets `$Ansible.Changed = $false`; it only reads Hyper-V state and does not create, modify, or remove a checkpoint.
+
+
+### 4. Delete a selected VM checkpoint
+
+`hyper-v-vm-checkpoint-deletion.yml` deletes one explicitly selected checkpoint for one VM.
+
+Recommended operator flow:
+
+```text
+Enter Hyper-V host and VM name
+              ↓
+Run hyper-v-list-checkpoints.yml
+              ↓
+Review checkpoint name, creation time and ID
+              ↓
+Enter the exact checkpoint name
+              ↓
+Run hyper-v-vm-checkpoint-deletion.yml
+              ↓
+Verify status is DELETED or ALREADY ABSENT
+```
+
+The playbook:
+
+- Confirms WinRM connectivity to the Hyper-V host.
+- Requires a non-empty checkpoint name.
+- Confirms exactly one VM matches `vm_name`.
+- Stops if multiple checkpoints share the requested name.
+- Returns `ALREADY ABSENT` without reporting a change when no match exists.
+- Deletes the selected checkpoint without an interactive prompt.
+- Queries Hyper-V again and verifies that the deleted checkpoint ID no longer exists.
+- Returns the VM, checkpoint name and final status.
+
+Run it with:
+
+```bash
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-vm-checkpoint-deletion.yml
+```
+
+Checkpoint deletion is destructive and may trigger AVHDX merge activity. Confirm the VM, checkpoint, storage health and retention approval before execution.
