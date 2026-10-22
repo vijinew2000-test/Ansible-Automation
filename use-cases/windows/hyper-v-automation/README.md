@@ -8,7 +8,8 @@ This use case manages a Microsoft Hyper-V host from Ansible through WinRM.
 hyper-v-automation/
 ├── README.md
 ├── test-hyperv-host-connectivity.yml
-└── create-vm-checkpoint.yml
+├── create-vm-checkpoint.yml
+└── list-vm-checkpoints.yml
 ```
 
 ### 1. Hyper-V host connectivity test
@@ -86,3 +87,26 @@ Unity-20261021-143012-123
 - Checkpoints consume storage and may grow while retained.
 - Do not create repeated checkpoints without a retention and deletion plan.
 - Never use production host credentials or addresses in this public repository.
+
+
+### 3. List checkpoints for a VM
+
+`list-vm-checkpoints.yml` is a read-only playbook for operators who do not log in to the Hyper-V Manager UI.
+
+The operator supplies the Hyper-V host connection and exact VM name. Unity returns:
+
+- VM name
+- Total checkpoint count
+- Checkpoint name
+- Creation time in the Hyper-V host's local time
+- Unique checkpoint ID
+
+The results are sorted from newest to oldest. The unique ID is useful for selecting an exact checkpoint in a later deletion workflow, especially when names are similar.
+
+Run it with:
+
+```bash
+ansible-playbook use-cases/windows/hyper-v-automation/list-vm-checkpoints.yml
+```
+
+This playbook sets `$Ansible.Changed = $false`; it only reads Hyper-V state and does not create, modify, or remove a checkpoint.
