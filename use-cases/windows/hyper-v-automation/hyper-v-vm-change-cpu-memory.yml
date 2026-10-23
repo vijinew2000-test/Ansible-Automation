@@ -1,0 +1,157 @@
+---
+- name: Change Hyper-V VM CPU and memory
+  hosts: localhost
+  gather_facts: false
+  become: false
+
+  vars:
+    # Documentation-only example address. Override securely at runtime.
+    hyperv_host: "192.0.2.10"
+    hyperv_user: "YOUR_HOST_USERNAME"
+    hyperv_password: "YOUR_HOST_PASSWORD"
+
+    vm_name: "win-test-01"
+    cpu_count: 2
+    memory_gb: 4
+    allow_restart: true
+
+    ansible_connection: winrm
+    ansible_host: "{{ hyperv_host }}"
+    ansible_user: "{{ hyperv_user }}"
+    ansible_password: "{{ hyperv_password }}"
+    ansible_port: 5985
+    ansible_winrm_scheme: http
+    ansible_winrm_transport: ntlm
+
+  tasks:
+    - name: Check Hyper-V host connectivity
+      ansible.windows.win_ping:
+      delegate_to: "{{ hyperv_host }}"
+
+    - name: Update and verify VM resources
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          VMName: "{{ vm_name }}"
+          CPUCount: "{{ cpu_count }}"
+          MemoryGB: "{{ memory_gb }}"
+          AllowRestart: "{{ allow_restart | bool }}"
+        script: |
+          param(
+              [string]$VMName,
+              [int]$CPUCount,
+              [int]$MemoryGB,
+              [bool]$AllowRestart
+          )
+
+          $Ansible.Changed = $false
+
+          $vms = @(Get-VM -Name $VMName -ErrorAction Stop |
+              Where-Object { $_.Name -eq $VMName })
+
+          if ($vms.Count -ne 1) {
+              throw "Expected exactly one VM named '$VMName'."
+          }
+
+          $vm = $vms[0]
+          $memory = Get-VMMemory -VM $vm -ErrorAction Stop
+          $hostInfo = Get-VMHost -ErrorAction Stop
+
+          if ($CPUCount -lt 1 -or
+              $CPUCount -gt $hostInfo.LogicalProcessorCount) {
+              throw "CPU count must be between 1 and the host logical processor count."
+          }
+
+          if ($MemoryGB -lt 1) {
+              throw "Memory must be at least 1 GB."
+          }
+
+          if ($memory.DynamicMemoryEnabled) {
+              throw "This playbook supports fixed-memory VMs only."
+          }
+
+          $originalState = $vm.State.ToString()
+          if ($originalState -notin @("Running", "Off")) {
+              throw "VM must be Running or Off. Current state: $originalState"
+          }
+
+          $beforeCPU = $vm.ProcessorCount
+          $beforeMemoryGB = $memory.Startup / 1GB
+          $targetBytes = [int64]$MemoryGB * 1GB
+
+          $cpuChange = $beforeCPU -ne $CPUCount
+          $memoryChange = $memory.Startup -ne $targetBytes
+          $needsChange = $cpuChange -or $memoryChange
+          $wasRunning = $originalState -eq "Running"
+
+          if ($needsChange) {
+              if ($wasRunning -and -not $AllowRestart) {
+                  throw "Changes require shutdown. Set allow_restart to true."
+              }
+
+              if ($memoryChange -and $targetBytes -gt $memory.Startup) {
+                  $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+                  $freeBytes = [int64]$os.FreePhysicalMemory * 1KB
+                  if (($targetBytes - $memory.Startup) -gt $freeBytes) {
+                      throw "Insufficient available host memory for this increase."
+                  }
+              }
+
+              try {
+                  if ($wasRunning) {
+                      Stop-VM -VM $vm -Confirm:$false -ErrorAction Stop
+                      $Ansible.Changed = $true
+                  }
+
+                  $vm = Get-VM -Id $vm.Id -ErrorAction Stop
+                  if ($vm.State.ToString() -ne "Off") {
+                      throw "VM did not shut down. Resource changes stopped."
+                  }
+
+                  if ($cpuChange) {
+                      Set-VMProcessor -VM $vm -Count $CPUCount -ErrorAction Stop
+                      $Ansible.Changed = $true
+                  }
+
+                  if ($memoryChange) {
+                      Set-VMMemory -VM $vm -StartupBytes $targetBytes -ErrorAction Stop
+                      $Ansible.Changed = $true
+                  }
+              }
+              finally {
+                  $current = Get-VM -Id $vm.Id -ErrorAction Stop
+                  if ($wasRunning -and $current.State.ToString() -eq "Off") {
+                      Start-VM -VM $current -ErrorAction Stop
+                  }
+              }
+          }
+
+          $finalVM = Get-VM -Id $vm.Id -ErrorAction Stop
+          $finalMemory = Get-VMMemory -VM $finalVM -ErrorAction Stop
+
+          if ($finalVM.ProcessorCount -ne $CPUCount -or
+              $finalMemory.Startup -ne $targetBytes -or
+              $finalVM.State.ToString() -ne $originalState) {
+              throw "Final VM resource or state verification failed."
+          }
+
+          $Ansible.Result = @{
+              VM = $finalVM.Name
+              BeforeCPU = $beforeCPU
+              AfterCPU = $finalVM.ProcessorCount
+              BeforeMemoryGB = $beforeMemoryGB
+              AfterMemoryGB = $finalMemory.Startup / 1GB
+              State = $finalVM.State.ToString()
+              Status = $(if ($needsChange) { "UPDATED" } else { "ALREADY CONFIGURED" })
+          }
+      delegate_to: "{{ hyperv_host }}"
+      register: resource_result
+
+    - name: Display VM resource details
+      ansible.builtin.debug:
+        msg:
+          - "VM        : {{ resource_result.result.VM }}"
+          - "CPU       : {{ resource_result.result.BeforeCPU }} -> {{ resource_result.result.AfterCPU }}"
+          - "Memory GB : {{ resource_result.result.BeforeMemoryGB }} -> {{ resource_result.result.AfterMemoryGB }}"
+          - "State     : {{ resource_result.result.State }}"
+          - "Status    : {{ resource_result.result.Status }}"
