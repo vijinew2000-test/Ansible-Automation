@@ -10,7 +10,8 @@ hyper-v-automation/
 ├── hyper-v-connection-test.yml
 ├── hyper-v-checkpoint-creation.yml
 ├── hyper-v-list-checkpoints.yml
-└── hyper-v-vm-checkpoint-deletion.yml
+├── hyper-v-vm-checkpoint-deletion.yml
+└── hyper-v-vm-change-cpu-memory.yml
 ```
 
 ### 1. Hyper-V host connectivity test
@@ -151,3 +152,29 @@ ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-vm-checkpoint-dele
 ```
 
 Checkpoint deletion is destructive and may trigger AVHDX merge activity. Confirm the VM, checkpoint, storage health and retention approval before execution.
+
+
+### 5. Hyper-V VM change CPU & memory
+
+`hyper-v-vm-change-cpu-memory.yml` changes the virtual processor count and fixed startup memory for one VM, then verifies the requested values and restores the VM's original running state.
+
+The playbook:
+
+- Confirms WinRM connectivity to the Hyper-V host.
+- Requires exactly one VM matching `vm_name`.
+- Validates CPU count against the host logical processor count.
+- Requires at least 1 GB of memory.
+- Supports fixed-memory VMs only; dynamic-memory VMs are rejected.
+- Makes no changes when CPU and memory already match.
+- Requires `allow_restart: true` before shutting down a running VM.
+- Checks available host memory before increasing VM memory.
+- Restarts the VM only when it was running before the change.
+- Verifies the final CPU, memory, and VM state.
+
+Run it with:
+
+```bash
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-vm-change-cpu-memory.yml
+```
+
+Changing these resources can interrupt service because a running VM must be shut down. Use an approved maintenance window, confirm host capacity, and take a suitable backup or checkpoint according to your change policy.
