@@ -1,0 +1,148 @@
+---
+- name: Report Hyper-V host and VM capacity
+  hosts: all
+  gather_facts: false
+  become: false
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_scheme: http
+    ansible_winrm_transport: ntlm
+
+  tasks:
+    - name: Collect host and VM resource details
+      ansible.windows.win_powershell:
+        error_action: stop
+        depth: 6
+        script: |
+          $Ansible.Changed = $false
+
+          function ConvertTo-GB {
+              param($Bytes)
+              return [math]::Round($Bytes / 1GB, 2)
+          }
+
+          $hostInfo = Get-VMHost -ErrorAction Stop
+          $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+          $vms = @(Get-VM -ErrorAction Stop | Sort-Object Name)
+          $running = @($vms | Where-Object {
+              $_.State.ToString() -eq "Running"
+          })
+
+          $vmDetails = @(
+              foreach ($vm in $vms) {
+                  $memory = Get-VMMemory -VM $vm -ErrorAction Stop
+
+                  $disks = @(
+                      foreach ($drive in @(
+                          Get-VMHardDiskDrive -VM $vm -ErrorAction Stop
+                      )) {
+                          if ([string]::IsNullOrWhiteSpace($drive.Path)) {
+                              @{
+                                  Path = $null
+                                  Note = "Pass-through disk; inspect separately."
+                              }
+                              continue
+                          }
+
+                          try {
+                              $vhd = Get-VHD -Path $drive.Path -ErrorAction Stop
+
+                              @{
+                                  Path = $drive.Path
+                                  Controller = $drive.ControllerType.ToString()
+                                  ControllerNumber = $drive.ControllerNumber
+                                  ControllerLocation = $drive.ControllerLocation
+                                  Type = $vhd.VhdType.ToString()
+                                  CapacityGB = ConvertTo-GB $vhd.Size
+                                  AttachedFileGB = ConvertTo-GB $vhd.FileSize
+                                  ParentPath = $vhd.ParentPath
+                              }
+                          }
+                          catch {
+                              @{
+                                  Path = $drive.Path
+                                  ReadError = $_.Exception.Message
+                              }
+                          }
+                      }
+                  )
+
+                  @{
+                      VM = $vm.Name
+                      State = $vm.State.ToString()
+                      VCPUs = $vm.ProcessorCount
+                      DynamicMemory = $memory.DynamicMemoryEnabled
+                      StartupMemoryGB = ConvertTo-GB $memory.Startup
+                      CurrentAssignedMemoryGB = ConvertTo-GB $vm.MemoryAssigned
+                      MinimumMemoryGB = ConvertTo-GB $memory.Minimum
+                      MaximumMemoryGB = ConvertTo-GB $memory.Maximum
+                      Disks = $disks
+                  }
+              }
+          )
+
+          $storage = @(
+              Get-Volume -ErrorAction Stop |
+                  Where-Object { $_.Size -gt 0 -and $_.FileSystem } |
+                  ForEach-Object {
+                      @{
+                          DriveLetter = [string]$_.DriveLetter
+                          Label = $_.FileSystemLabel
+                          VolumePath = $_.Path
+                          TotalGB = ConvertTo-GB $_.Size
+                          FreeGB = ConvertTo-GB $_.SizeRemaining
+                          FreePercent = [math]::Round(
+                              100 * $_.SizeRemaining / $_.Size, 1
+                          )
+                      }
+                  }
+          )
+
+          $Ansible.Result = @{
+              Host = $env:COMPUTERNAME
+              TotalVMs = $vms.Count
+              RunningVMs = $running.Count
+              HostLogicalProcessors = $hostInfo.LogicalProcessorCount
+              ConfiguredVCPUsAllVMs = (
+                  $vms | Measure-Object ProcessorCount -Sum
+              ).Sum
+              ConfiguredVCPUsRunningVMs = (
+                  $running | Measure-Object ProcessorCount -Sum
+              ).Sum
+              HostPhysicalMemoryGB = ConvertTo-GB $hostInfo.MemoryCapacity
+              HostFreeMemoryGB = ConvertTo-GB (
+                  [int64]$os.FreePhysicalMemory * 1KB
+              )
+              CurrentVMAssignedMemoryGB = ConvertTo-GB (
+                  ($vms | Measure-Object MemoryAssigned -Sum).Sum
+              )
+              Storage = $storage
+              VMs = $vmDetails
+          }
+      register: capacity_report
+
+    - name: Display host capacity summary
+      ansible.builtin.debug:
+        msg:
+          - "Host                     : {{ capacity_report.result.Host }}"
+          - "Total VMs                : {{ capacity_report.result.TotalVMs }}"
+          - "Running VMs              : {{ capacity_report.result.RunningVMs }}"
+          - "Host logical processors  : {{ capacity_report.result.HostLogicalProcessors }}"
+          - "Configured vCPUs/all VMs  : {{ capacity_report.result.ConfiguredVCPUsAllVMs }}"
+          - "Configured vCPUs/running : {{ capacity_report.result.ConfiguredVCPUsRunningVMs }}"
+          - "Host physical RAM GB     : {{ capacity_report.result.HostPhysicalMemoryGB }}"
+          - "Host free RAM GB         : {{ capacity_report.result.HostFreeMemoryGB }}"
+          - "VM assigned RAM GB       : {{ capacity_report.result.CurrentVMAssignedMemoryGB }}"
+
+    - name: Display host storage
+      ansible.builtin.debug:
+        var: capacity_report.result.Storage
+
+    - name: Display each VM allocation
+      ansible.builtin.debug:
+        var: item
+      loop: "{{ capacity_report.result.VMs }}"
+      loop_control:
+        label: "{{ item.VM }}"
