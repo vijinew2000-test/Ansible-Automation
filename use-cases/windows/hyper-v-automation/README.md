@@ -11,7 +11,8 @@ hyper-v-automation/
 ├── hyper-v-checkpoint-creation.yml
 ├── hyper-v-list-checkpoints.yml
 ├── hyper-v-vm-checkpoint-deletion.yml
-└── hyper-v-vm-change-cpu-memory.yml
+├── hyper-v-vm-change-cpu-memory.yml
+└── hyper-v-host-vm-capacity-report.yml
 ```
 
 ### 1. Hyper-V host connectivity test
@@ -178,3 +179,29 @@ ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-vm-change-cpu-memo
 ```
 
 Changing these resources can interrupt service because a running VM must be shut down. Use an approved maintenance window, confirm host capacity, and take a suitable backup or checkpoint according to your change policy.
+
+
+### 6. Report Hyper-V host and VM capacity
+
+`hyper-v-host-vm-capacity-report.yml` is a read-only capacity and inventory report. Run it before planning VM CPU, memory, or virtual-disk changes.
+
+It reports:
+
+- Total VM count and running VM count.
+- Host logical processor count.
+- Configured vCPU totals for all VMs and running VMs.
+- Host total and currently free physical memory.
+- Each VM's state, vCPU count, dynamic-memory setting, configured memory, and current assigned memory.
+- Each attached VHD/VHDX path, type, virtual capacity, current file size, controller location, and parent path when applicable.
+- Each host volume's total capacity, free capacity, and free percentage.
+- Pass-through disks and VHD read errors that require separate inspection.
+
+Run it with:
+
+```bash
+ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-host-vm-capacity-report.yml
+```
+
+The target Hyper-V hosts and credentials should come from protected inventory or runtime inputs. The playbook sets `$Ansible.Changed = $false` and performs no resource changes.
+
+For virtual-disk expansion, verify the free space on the host volume containing the VHD/VHDX. CPU allocation is not a fixed consumable pool, so configured vCPU totals are reported for planning without presenting a misleading calculated “remaining vCPU” value.
