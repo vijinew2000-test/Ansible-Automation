@@ -1,24 +1,17 @@
 ---
 - name: Change Hyper-V VM CPU and memory
-  hosts: localhost
+  hosts: all
   gather_facts: false
   become: false
 
   vars:
-    # Documentation-only example address. Override securely at runtime.
-    hyperv_host: "192.0.2.10"
-    hyperv_user: "YOUR_HOST_USERNAME"
-    hyperv_password: "YOUR_HOST_PASSWORD"
-
     vm_name: "win-test-01"
     cpu_count: 2
     memory_gb: 4
     allow_restart: true
 
+    # Host address and credentials come from inventory / Unity
     ansible_connection: winrm
-    ansible_host: "{{ hyperv_host }}"
-    ansible_user: "{{ hyperv_user }}"
-    ansible_password: "{{ hyperv_password }}"
     ansible_port: 5985
     ansible_winrm_scheme: http
     ansible_winrm_transport: ntlm
@@ -26,7 +19,6 @@
   tasks:
     - name: Check Hyper-V host connectivity
       ansible.windows.win_ping:
-      delegate_to: "{{ hyperv_host }}"
 
     - name: Update and verify VM resources
       ansible.windows.win_powershell:
@@ -92,6 +84,7 @@
               if ($memoryChange -and $targetBytes -gt $memory.Startup) {
                   $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
                   $freeBytes = [int64]$os.FreePhysicalMemory * 1KB
+
                   if (($targetBytes - $memory.Startup) -gt $freeBytes) {
                       throw "Insufficient available host memory for this increase."
                   }
@@ -104,6 +97,7 @@
                   }
 
                   $vm = Get-VM -Id $vm.Id -ErrorAction Stop
+
                   if ($vm.State.ToString() -ne "Off") {
                       throw "VM did not shut down. Resource changes stopped."
                   }
@@ -120,6 +114,7 @@
               }
               finally {
                   $current = Get-VM -Id $vm.Id -ErrorAction Stop
+
                   if ($wasRunning -and $current.State.ToString() -eq "Off") {
                       Start-VM -VM $current -ErrorAction Stop
                   }
@@ -144,14 +139,14 @@
               State = $finalVM.State.ToString()
               Status = $(if ($needsChange) { "UPDATED" } else { "ALREADY CONFIGURED" })
           }
-      delegate_to: "{{ hyperv_host }}"
       register: resource_result
 
     - name: Display VM resource details
       ansible.builtin.debug:
         msg:
-          - "VM        : {{ resource_result.result.VM }}"
-          - "CPU       : {{ resource_result.result.BeforeCPU }} -> {{ resource_result.result.AfterCPU }}"
-          - "Memory GB : {{ resource_result.result.BeforeMemoryGB }} -> {{ resource_result.result.AfterMemoryGB }}"
-          - "State     : {{ resource_result.result.State }}"
-          - "Status    : {{ resource_result.result.Status }}"
+          - "Hyper-V Host : {{ inventory_hostname }}"
+          - "VM           : {{ resource_result.result.VM }}"
+          - "CPU          : {{ resource_result.result.BeforeCPU }} -> {{ resource_result.result.AfterCPU }}"
+          - "Memory GB    : {{ resource_result.result.BeforeMemoryGB }} -> {{ resource_result.result.AfterMemoryGB }}"
+          - "State        : {{ resource_result.result.State }}"
+          - "Status       : {{ resource_result.result.Status }}"
