@@ -122,7 +122,7 @@ The play targets `hosts: all` and runs directly on each inventory-selected Hyper
 Recommended operator flow:
 
 ```text
-Enter Hyper-V host and VM name
+Select inventory Hyper-V host and enter VM name
               ↓
 Run hyper-v-list-checkpoints.yml
               ↓
@@ -144,7 +144,9 @@ The playbook:
 - Returns `ALREADY ABSENT` without reporting a change when no match exists.
 - Deletes the selected checkpoint without an interactive prompt.
 - Queries Hyper-V again and verifies that the deleted checkpoint ID no longer exists.
-- Returns the VM, checkpoint name and final status.
+- Returns the inventory-selected host, VM, checkpoint name and final status.
+
+The play targets `hosts: all` and runs directly on each inventory-selected Hyper-V host. The host address and credentials come from Unity or protected Ansible inventory; the playbook does not use localhost delegation or embed credentials.
 
 Run it with:
 
