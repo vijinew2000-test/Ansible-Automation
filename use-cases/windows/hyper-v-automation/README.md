@@ -31,13 +31,13 @@ This is an Ansible/WinRM connectivity test, not an ICMP network ping.
 
 `hyper-v-checkpoint-creation.yml`:
 
-1. Tests connectivity to the Hyper-V host.
-2. Finds the requested VM by name.
+1. Runs directly on each inventory-selected Hyper-V host.
+2. Validates that `vm_name` is not empty and matches exactly one VM.
 3. Creates a timestamped checkpoint.
-4. Queries Hyper-V to confirm that the checkpoint exists.
-5. Returns the VM name, checkpoint name, creation time, and status.
+4. Queries Hyper-V and verifies the new checkpoint by its unique ID.
+5. Returns the host, VM, checkpoint name, checkpoint ID, creation time, and status.
 
-The guest Windows VM's IP address is not required. The playbook connects to the **Hyper-V host** and selects the guest using `vm_name`.
+The Hyper-V host address and credentials come from Unity or protected Ansible inventory. The guest Windows VM's IP address is not required because Hyper-V selects it using `vm_name`. The playbook does not use localhost delegation or embed credentials.
 
 ## Example values
 
