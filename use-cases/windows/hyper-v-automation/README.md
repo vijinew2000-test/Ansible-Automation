@@ -173,6 +173,9 @@ The playbook:
 - Checks available host memory before increasing VM memory.
 - Restarts the VM only when it was running before the change.
 - Verifies the final CPU, memory, and VM state.
+- Reports the inventory-selected Hyper-V host and before/after resource values.
+
+The play targets `hosts: all` and runs directly on each inventory-selected Hyper-V host. The host address and credentials come from Unity or protected Ansible inventory; the playbook does not use localhost delegation or embed credentials.
 
 Run it with:
 
