@@ -96,7 +96,7 @@ Unity-20261021-143012-123
 
 `hyper-v-list-checkpoints.yml` is a read-only playbook for operators who do not log in to the Hyper-V Manager UI.
 
-The operator supplies the Hyper-V host connection and exact VM name. Unity returns:
+The operator supplies the exact VM name. The Hyper-V host address and credentials come from Unity or protected Ansible inventory. Unity returns:
 
 - VM name
 - Total checkpoint count
@@ -112,7 +112,7 @@ Run it with:
 ansible-playbook use-cases/windows/hyper-v-automation/hyper-v-list-checkpoints.yml
 ```
 
-This playbook sets `$Ansible.Changed = $false`; it only reads Hyper-V state and does not create, modify, or remove a checkpoint.
+The play targets `hosts: all` and runs directly on each inventory-selected Hyper-V host; it does not use localhost delegation or embed host credentials. It sets `$Ansible.Changed = $false` and does not create, modify, or remove a checkpoint.
 
 
 ### 4. Delete a selected VM checkpoint
