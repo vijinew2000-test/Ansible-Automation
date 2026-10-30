@@ -1,24 +1,15 @@
 ---
 - name: Delete a specific Hyper-V VM checkpoint
-  hosts: localhost
+  hosts: all
   gather_facts: false
   become: false
 
   vars:
-    # Documentation-only example address. Replace at runtime.
-    hyperv_host: "192.0.2.10"
-    hyperv_user: "YOUR_HOST_USERNAME"
-    hyperv_password: "YOUR_HOST_PASSWORD"
-
-    # Exact VM and checkpoint names.
     vm_name: "win-test-01"
     checkpoint_name: "Unity-20261022-165334-708"
 
-    # WinRM connection to the Hyper-V host.
+    # Host address and credentials come from inventory / Unity
     ansible_connection: winrm
-    ansible_host: "{{ hyperv_host }}"
-    ansible_user: "{{ hyperv_user }}"
-    ansible_password: "{{ hyperv_password }}"
     ansible_port: 5985
     ansible_winrm_scheme: http
     ansible_winrm_transport: ntlm
@@ -26,7 +17,6 @@
   tasks:
     - name: Check Hyper-V host connectivity
       ansible.windows.win_ping:
-      delegate_to: "{{ hyperv_host }}"
 
     - name: Delete checkpoint and verify removal
       ansible.windows.win_powershell:
@@ -90,13 +80,12 @@
               Checkpoint = $CheckpointName
               Status = "DELETED"
           }
-      delegate_to: "{{ hyperv_host }}"
       register: checkpoint_result
 
     - name: Display checkpoint deletion details
       ansible.builtin.debug:
         msg:
-          - "Hyper-V Host : {{ hyperv_host }}"
+          - "Hyper-V Host : {{ inventory_hostname }}"
           - "VM           : {{ checkpoint_result.result.VM }}"
           - "Checkpoint   : {{ checkpoint_result.result.Checkpoint }}"
           - "Status       : {{ checkpoint_result.result.Status }}"
