@@ -631,3 +631,14 @@ An automation is complete only when:
 - Verification confirms the expected result.
 - Rollback is available and tested where required.
 - Documentation is updated.
+
+
+## 20. AIOps automation use cases
+
+AIOps use cases combine operational measurements with guarded decision and remediation logic.
+
+Current example:
+
+- [Network latency detection and automatic failover](use-cases/aiops/network-latency-automatic-failover/README.md) — confirms persistent primary latency, validates an alternate server, records the selected destination, and stops safely when the alternate is unavailable.
+
+The playbook records the selected server in a local state file. Moving real traffic requires a separately reviewed integration with the relevant proxy, load balancer, DNS, routing, or application configuration.
