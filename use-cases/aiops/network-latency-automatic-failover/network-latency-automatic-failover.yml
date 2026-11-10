@@ -5,9 +5,8 @@
   become: true
 
   vars:
-    # Supply both destinations through inventory, Unity, or --extra-vars.
-    primary_server: "{{ primary_server }}"
-    alternate_server: "{{ alternate_server }}"
+    # Supply primary_server and alternate_server through inventory, Unity,
+    # or --extra-vars. Do not redefine them here as self-references.
 
     # Lab baseline in milliseconds.
     baseline_ms: 0.30
@@ -23,9 +22,445 @@
     - name: Validate required inputs
       ansible.builtin.assert:
         that:
-          - primary_server | string | length > 0
-          - alternate_server | string | length > 0
-          - primary_server != alternate_server
+          - (primary_server | default('') | string | length) > 0
+          - (alternate_server | default('') | string | length) > 0
+          - (primary_server | default('')) != (alternate_server | default(''))
+          - (primary_server | default('')) is match('^[A-Za-z0-9][A-Za-z0-9._:-]*
+          - baseline_ms | float > 0
+          - ping_count | int > 0
+          - confirmation_wait | int >= 0
+        fail_msg: >-
+          Supply different primary_server and alternate_server values and valid
+          positive latency settings.
+
+    # ---------------------------------------------------------
+    # 1. Check PRIMARY
+    # ---------------------------------------------------------
+
+    - name: Check primary server latency
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c {{ ping_count | int }} -W 2 {{ primary_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: initial_latency
+      changed_when: false
+      failed_when: false
+
+    - name: Set initial RTT value
+      ansible.builtin.set_fact:
+        initial_rtt_ms: >-
+          {{
+            initial_latency.stdout
+            | default('999', true)
+            | float
+          }}
+
+    - name: Display primary latency
+      ansible.builtin.debug:
+        msg: >-
+          Primary={{ primary_server }}
+          RTT={{ initial_latency.stdout | default('UNREACHABLE', true) }} ms
+          Baseline={{ baseline_ms }} ms
+
+    # ---------------------------------------------------------
+    # 2. Detect anomaly
+    # ---------------------------------------------------------
+
+    - name: Determine whether latency is abnormal
+      ansible.builtin.set_fact:
+        anomaly: "{{ initial_rtt_ms | float > baseline_ms | float }}"
+
+    - name: Display latency status
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'ANOMALY DETECTED'
+            if anomaly
+            else
+            'LATENCY NORMAL - KEEPING PRIMARY'
+          }}
+
+    # ---------------------------------------------------------
+    # 3. Confirm anomaly
+    # ---------------------------------------------------------
+
+    - name: Wait before confirming anomaly
+      ansible.builtin.pause:
+        seconds: "{{ confirmation_wait | int }}"
+      when: anomaly
+
+    - name: Recheck primary server latency
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c {{ ping_count | int }} -W 2 {{ primary_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: confirmation_latency
+      changed_when: false
+      failed_when: false
+      when: anomaly
+
+    - name: Set confirmation RTT value
+      ansible.builtin.set_fact:
+        confirmation_rtt_ms: >-
+          {{
+            confirmation_latency.stdout
+            | default('999', true)
+            | float
+            if anomaly
+            else initial_rtt_ms | float
+          }}
+
+    - name: Display confirmation result
+      ansible.builtin.debug:
+        msg: >-
+          Confirmation RTT={{
+            confirmation_latency.stdout | default('UNREACHABLE', true)
+          }} ms
+      when: anomaly
+
+    # ---------------------------------------------------------
+    # 4. Confirm whether failover is required
+    # ---------------------------------------------------------
+
+    - name: Determine whether failover is required
+      ansible.builtin.set_fact:
+        failover_required: >-
+          {{
+            anomaly and
+            (confirmation_rtt_ms | float > baseline_ms | float)
+          }}
+
+    # ---------------------------------------------------------
+    # 5. Keep PRIMARY when healthy
+    # ---------------------------------------------------------
+
+    - name: Keep primary server
+      ansible.builtin.set_fact:
+        active_server: "{{ primary_server }}"
+      when: not failover_required
+
+    # ---------------------------------------------------------
+    # 6. Test ALTERNATE before failover
+    # ---------------------------------------------------------
+
+    - name: Check alternate server availability
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c 3 -W 2 {{ alternate_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: alternate_latency
+      changed_when: false
+      failed_when: false
+      when: failover_required
+
+    - name: Determine alternate server availability
+      ansible.builtin.set_fact:
+        alternate_available: >-
+          {{
+            alternate_latency.stdout is defined and
+            (alternate_latency.stdout | default('0', true) | float) > 0
+          }}
+      when: failover_required
+
+    - name: Display alternate server health
+      ansible.builtin.debug:
+        msg: >-
+          Alternate={{ alternate_server }}
+          RTT={{ alternate_latency.stdout | default('UNREACHABLE', true) }} ms
+      when: failover_required
+
+    - name: Stop when alternate server is unavailable
+      ansible.builtin.fail:
+        msg: >-
+          Primary latency remained above the baseline, but the alternate server
+          did not return a valid RTT. No failover destination was written.
+      when:
+        - failover_required
+        - not alternate_available
+
+    # ---------------------------------------------------------
+    # 7. Fail over to ALTERNATE
+    # ---------------------------------------------------------
+
+    - name: Select alternate server
+      ansible.builtin.set_fact:
+        active_server: "{{ alternate_server }}"
+      when:
+        - failover_required
+        - alternate_available
+
+    # ---------------------------------------------------------
+    # 8. Update active destination
+    # ---------------------------------------------------------
+
+    - name: Update active server
+      ansible.builtin.copy:
+        dest: "{{ active_server_file }}"
+        content: "ACTIVE_SERVER={{ active_server }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when: failover_required
+
+    # ---------------------------------------------------------
+    # 9. Log result
+    # ---------------------------------------------------------
+
+    - name: Record final decision
+      ansible.builtin.shell: |
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | \
+        PRIMARY={{ primary_server }} | \
+        INITIAL_RTT={{ initial_latency.stdout | default('NA', true) }}ms | \
+        BASELINE={{ baseline_ms }}ms | \
+        CONFIRMATION_RTT={{ confirmation_latency.stdout | default('NA', true) }}ms | \
+        ACTIVE={{ active_server }} | \
+        FAILOVER={{ 'YES' if failover_required else 'NO' }}" \
+        >> "{{ log_file }}"
+      changed_when: false
+
+    # ---------------------------------------------------------
+    # 10. Final result
+    # ---------------------------------------------------------
+
+    - name: Display final decision
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "NETWORK LATENCY RESULT"
+          - "=========================================="
+          - "Primary       : {{ primary_server }}"
+          - "Alternate     : {{ alternate_server }}"
+          - "Baseline      : {{ baseline_ms }} ms"
+          - "Initial RTT   : {{ initial_latency.stdout | default('NA', true) }} ms"
+          - "Confirm RTT   : {{ confirmation_latency.stdout | default('NA', true) }} ms"
+          - "Failover      : {{ 'YES' if failover_required else 'NO' }}"
+          - "Active Server : {{ active_server }}"
+          - "=========================================="
+)
+          - (alternate_server | default('')) is match('^[A-Za-z0-9][A-Za-z0-9._:-]*
+          - baseline_ms | float > 0
+          - ping_count | int > 0
+          - confirmation_wait | int >= 0
+        fail_msg: >-
+          Supply different primary_server and alternate_server values and valid
+          positive latency settings.
+
+    # ---------------------------------------------------------
+    # 1. Check PRIMARY
+    # ---------------------------------------------------------
+
+    - name: Check primary server latency
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c {{ ping_count | int }} -W 2 {{ primary_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: initial_latency
+      changed_when: false
+      failed_when: false
+
+    - name: Set initial RTT value
+      ansible.builtin.set_fact:
+        initial_rtt_ms: >-
+          {{
+            initial_latency.stdout
+            | default('999', true)
+            | float
+          }}
+
+    - name: Display primary latency
+      ansible.builtin.debug:
+        msg: >-
+          Primary={{ primary_server }}
+          RTT={{ initial_latency.stdout | default('UNREACHABLE', true) }} ms
+          Baseline={{ baseline_ms }} ms
+
+    # ---------------------------------------------------------
+    # 2. Detect anomaly
+    # ---------------------------------------------------------
+
+    - name: Determine whether latency is abnormal
+      ansible.builtin.set_fact:
+        anomaly: "{{ initial_rtt_ms | float > baseline_ms | float }}"
+
+    - name: Display latency status
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'ANOMALY DETECTED'
+            if anomaly
+            else
+            'LATENCY NORMAL - KEEPING PRIMARY'
+          }}
+
+    # ---------------------------------------------------------
+    # 3. Confirm anomaly
+    # ---------------------------------------------------------
+
+    - name: Wait before confirming anomaly
+      ansible.builtin.pause:
+        seconds: "{{ confirmation_wait | int }}"
+      when: anomaly
+
+    - name: Recheck primary server latency
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c {{ ping_count | int }} -W 2 {{ primary_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: confirmation_latency
+      changed_when: false
+      failed_when: false
+      when: anomaly
+
+    - name: Set confirmation RTT value
+      ansible.builtin.set_fact:
+        confirmation_rtt_ms: >-
+          {{
+            confirmation_latency.stdout
+            | default('999', true)
+            | float
+            if anomaly
+            else initial_rtt_ms | float
+          }}
+
+    - name: Display confirmation result
+      ansible.builtin.debug:
+        msg: >-
+          Confirmation RTT={{
+            confirmation_latency.stdout | default('UNREACHABLE', true)
+          }} ms
+      when: anomaly
+
+    # ---------------------------------------------------------
+    # 4. Confirm whether failover is required
+    # ---------------------------------------------------------
+
+    - name: Determine whether failover is required
+      ansible.builtin.set_fact:
+        failover_required: >-
+          {{
+            anomaly and
+            (confirmation_rtt_ms | float > baseline_ms | float)
+          }}
+
+    # ---------------------------------------------------------
+    # 5. Keep PRIMARY when healthy
+    # ---------------------------------------------------------
+
+    - name: Keep primary server
+      ansible.builtin.set_fact:
+        active_server: "{{ primary_server }}"
+      when: not failover_required
+
+    # ---------------------------------------------------------
+    # 6. Test ALTERNATE before failover
+    # ---------------------------------------------------------
+
+    - name: Check alternate server availability
+      ansible.builtin.shell: |
+        set -o pipefail
+        ping -c 3 -W 2 {{ alternate_server | quote }} |
+        awk -F'/' '/rtt/ {print $5}'
+      args:
+        executable: /bin/bash
+      register: alternate_latency
+      changed_when: false
+      failed_when: false
+      when: failover_required
+
+    - name: Determine alternate server availability
+      ansible.builtin.set_fact:
+        alternate_available: >-
+          {{
+            alternate_latency.stdout is defined and
+            (alternate_latency.stdout | default('0', true) | float) > 0
+          }}
+      when: failover_required
+
+    - name: Display alternate server health
+      ansible.builtin.debug:
+        msg: >-
+          Alternate={{ alternate_server }}
+          RTT={{ alternate_latency.stdout | default('UNREACHABLE', true) }} ms
+      when: failover_required
+
+    - name: Stop when alternate server is unavailable
+      ansible.builtin.fail:
+        msg: >-
+          Primary latency remained above the baseline, but the alternate server
+          did not return a valid RTT. No failover destination was written.
+      when:
+        - failover_required
+        - not alternate_available
+
+    # ---------------------------------------------------------
+    # 7. Fail over to ALTERNATE
+    # ---------------------------------------------------------
+
+    - name: Select alternate server
+      ansible.builtin.set_fact:
+        active_server: "{{ alternate_server }}"
+      when:
+        - failover_required
+        - alternate_available
+
+    # ---------------------------------------------------------
+    # 8. Update active destination
+    # ---------------------------------------------------------
+
+    - name: Update active server
+      ansible.builtin.copy:
+        dest: "{{ active_server_file }}"
+        content: "ACTIVE_SERVER={{ active_server }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when: failover_required
+
+    # ---------------------------------------------------------
+    # 9. Log result
+    # ---------------------------------------------------------
+
+    - name: Record final decision
+      ansible.builtin.shell: |
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | \
+        PRIMARY={{ primary_server }} | \
+        INITIAL_RTT={{ initial_latency.stdout | default('NA', true) }}ms | \
+        BASELINE={{ baseline_ms }}ms | \
+        CONFIRMATION_RTT={{ confirmation_latency.stdout | default('NA', true) }}ms | \
+        ACTIVE={{ active_server }} | \
+        FAILOVER={{ 'YES' if failover_required else 'NO' }}" \
+        >> "{{ log_file }}"
+      changed_when: false
+
+    # ---------------------------------------------------------
+    # 10. Final result
+    # ---------------------------------------------------------
+
+    - name: Display final decision
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "NETWORK LATENCY RESULT"
+          - "=========================================="
+          - "Primary       : {{ primary_server }}"
+          - "Alternate     : {{ alternate_server }}"
+          - "Baseline      : {{ baseline_ms }} ms"
+          - "Initial RTT   : {{ initial_latency.stdout | default('NA', true) }} ms"
+          - "Confirm RTT   : {{ confirmation_latency.stdout | default('NA', true) }} ms"
+          - "Failover      : {{ 'YES' if failover_required else 'NO' }}"
+          - "Active Server : {{ active_server }}"
+          - "=========================================="
+)
           - baseline_ms | float > 0
           - ping_count | int > 0
           - confirmation_wait | int >= 0
