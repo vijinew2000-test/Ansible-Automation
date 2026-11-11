@@ -642,3 +642,14 @@ Current example:
 - [Network latency detection and automatic failover](use-cases/aiops/network-latency-automatic-failover/README.md) — confirms persistent primary latency, validates an alternate server, records the selected destination, and stops safely when the alternate is unavailable.
 
 The playbook records the selected server in a local state file. Moving real traffic requires a separately reviewed integration with the relevant proxy, load balancer, DNS, routing, or application configuration.
+
+
+## 21. Monitoring automation use cases
+
+Monitoring automation installs and configures approved monitoring components while keeping credentials outside Git.
+
+Current example:
+
+- [SNMP installation and configuration on Ubuntu VDIs](use-cases/monitoring/snmp-installation-ubuntu/README.md) — installs `snmp` and `snmpd`, restricts read-only access to approved monitoring servers, restarts only after configuration changes, and verifies the service and UDP 161 listener.
+
+The committed monitoring addresses use documentation-only TEST-NET values. Supply real addresses and the protected SNMP community through Unity inventory, Ansible Vault, or an approved secret manager.
