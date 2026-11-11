@@ -10,7 +10,7 @@ This category contains Ansible automation for installing, configuring, and verif
 
 - Keep monitoring credentials and SNMP community strings in Unity inventory, Ansible Vault, or an approved secret manager.
 - Restrict monitoring access to approved source addresses.
-- Remove insecure default configuration.
-- Restart services only when configuration changes.
-- Verify both service state and listening ports after deployment.
+- Replace documentation-only addresses through protected inventory.
+- Verify service state after deployment and test remote monitoring connectivity separately.
 - Use staged execution and `--limit` for large rollouts.
+- Record when a playbook deliberately restarts a service on every execution.
