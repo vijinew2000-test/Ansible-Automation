@@ -2,23 +2,25 @@
 
 ## Purpose
 
-`install-configure-snmp-ubuntu.yml` installs the Ubuntu SNMP client and daemon, restricts read-only access to approved monitoring servers, starts the service, and verifies that it is active and listening on UDP port 161.
+`install-configure-snmp-ubuntu.yml` installs the Ubuntu SNMP packages, opens the SNMP daemon listener beyond localhost, restricts read-only access to approved monitoring servers, restarts the service, enables it at boot, and verifies that it is active.
 
 ## What the playbook does
 
-1. Targets the inventory host selected through `target_ip`.
-2. Validates that a protected SNMP community and monitoring-server list are available.
-3. Installs `snmp` and `snmpd`.
-4. Configures SNMP to listen on IPv4 UDP 161 and IPv6 loopback.
-5. Removes existing unmanaged `rocommunity` and `rocommunity6` entries.
-6. Adds one restricted read-only community rule per approved monitoring server.
-7. Restarts SNMP only when configuration changes.
-8. Enables `snmpd` at boot.
-9. Verifies the service and UDP 161 listener.
+1. Targets inventory-selected Ubuntu hosts using `hosts: all`.
+2. Uses root privilege escalation.
+3. Uses `/tmp/.ansible-remote/tmp` when the SSH user's home directory is unsuitable for Ansible temporary files.
+4. Uses a 60-second SSH timeout.
+5. Validates that a protected SNMP community and monitoring-server list are available.
+6. Installs packages matching `snmp*`.
+7. Comments the default localhost-only `agentaddress` line and keeps a backup.
+8. Adds `agentAddress udp:161,udp6:[::1]:161`.
+9. Adds one restricted read-only community rule for each approved monitoring server.
+10. Restarts and enables `snmpd`.
+11. Verifies that `systemctl is-active snmpd` returns `active`.
 
-## Inputs
+## Protected and example values
 
-The committed addresses are documentation-only TEST-NET examples:
+The repository contains only documentation-safe TEST-NET addresses:
 
 ```yaml
 monitoring_servers:
@@ -26,9 +28,9 @@ monitoring_servers:
   - "192.0.2.11"
 ```
 
-Replace them through protected Unity or inventory variables. Do not commit production monitoring addresses.
+Override them through protected Unity or inventory variables.
 
-The community is not stored in Git:
+The real community is not stored in Git:
 
 ```yaml
 snmp_community: "{{ vault_snmp_community }}"
@@ -38,12 +40,11 @@ Store `vault_snmp_community` in Unity, Ansible Vault, or an approved secret mana
 
 ## Execution
 
-The target IP must match a host known to the selected Ansible/Unity inventory. Inventory supplies the shared connection user and credentials.
+Because the play uses `hosts: all`, select the required VDI using Unity's target selection or Ansible `--limit`. Inventory supplies the common SSH user and credentials.
 
 ```bash
 ansible-playbook -i inventories/production/hosts.yml \
   use-cases/monitoring/snmp-installation-ubuntu/install-configure-snmp-ubuntu.yml \
-  --extra-vars "target_ip=TARGET_INVENTORY_HOST" \
   --limit TARGET_INVENTORY_HOST
 ```
 
@@ -51,17 +52,23 @@ Use the approved secret-loading method for `vault_snmp_community`.
 
 ## Expected result
 
-The play finishes with:
-
 ```text
-SNMP service is installed, running, and listening on <inventory-host>
+VM: <inventory-host>
+SNMP service: active
+SNMP installation and configuration completed successfully
 ```
 
-A successful result confirms that `snmpd` is active and UDP port 161 is listening. It does not prove that a remote monitoring server can reach the VM; firewall, routing, and monitoring-side polling must be verified separately.
+This confirms that the service is active. It does not prove that UDP 161 is reachable from the monitoring platform; verify host firewall, network ACLs, routing, and a remote SNMP poll separately.
+
+## Operational notes
+
+- This version deliberately restarts `snmpd` on every execution.
+- `ansible_remote_tmp` uses a fixed path because shell-style `${USER}` expansion does not occur inside this Ansible YAML variable.
+- Test with one VDI using `--limit` before a wider rollout.
+- Review whether the `snmp*` package wildcard is appropriate for the approved Ubuntu image.
 
 ## Security notes
 
 - SNMPv2c community strings are shared secrets and are not encrypted on the network.
 - Limit UDP 161 with host and network firewalls to approved monitoring servers.
 - Prefer SNMPv3 where authentication and encryption are required.
-- Test on one approved VDI before rolling out to the remaining systems.
