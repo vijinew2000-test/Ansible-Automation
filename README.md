@@ -650,6 +650,6 @@ Monitoring automation installs and configures approved monitoring components whi
 
 Current example:
 
-- [SNMP installation and configuration on Ubuntu VDIs](use-cases/monitoring/snmp-installation-ubuntu/README.md) — installs `snmp` and `snmpd`, restricts read-only access to approved monitoring servers, restarts only after configuration changes, and verifies the service and UDP 161 listener.
+- [SNMP installation and configuration on Ubuntu VDIs](use-cases/monitoring/snmp-installation-ubuntu/README.md) — installs Ubuntu SNMP packages, configures approved monitoring-server access, restarts and enables `snmpd`, and verifies that the service is active.
 
 The committed monitoring addresses use documentation-only TEST-NET values. Supply real addresses and the protected SNMP community through Unity inventory, Ansible Vault, or an approved secret manager.
