@@ -1,0 +1,95 @@
+---
+- name: Install and configure SNMP on an Ubuntu VM
+  hosts: "{{ target_ip }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    # Store the real value in Unity inventory, Ansible Vault, or a secret manager.
+    snmp_community: "{{ vault_snmp_community }}"
+
+    # Documentation-only TEST-NET addresses. Override in protected inventory.
+    monitoring_servers:
+      - "192.0.2.10"
+      - "192.0.2.11"
+
+  pre_tasks:
+    - name: Validate required SNMP inputs
+      ansible.builtin.assert:
+        that:
+          - (snmp_community | default('') | string | length) > 0
+          - monitoring_servers | length > 0
+        fail_msg: >-
+          Supply vault_snmp_community securely and at least one approved
+          monitoring server address.
+      no_log: true
+
+  tasks:
+    - name: Update package lists and install SNMP
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - snmp
+          - snmpd
+        state: present
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_MODE: "l"
+
+    - name: Configure SNMP listening address
+      ansible.builtin.lineinfile:
+        path: /etc/snmp/snmpd.conf
+        regexp: '^\s*agentAddress\s+'
+        line: "agentAddress udp:161,udp6:[::1]:161"
+        backup: true
+      notify: Restart SNMP
+
+    - name: Remove existing unmanaged community entries
+      ansible.builtin.lineinfile:
+        path: /etc/snmp/snmpd.conf
+        regexp: '^\s*rocommunity6?\s+'
+        state: absent
+      no_log: true
+      notify: Restart SNMP
+
+    - name: Allow read access from approved monitoring servers
+      ansible.builtin.lineinfile:
+        path: /etc/snmp/snmpd.conf
+        line: "rocommunity {{ snmp_community }} {{ item }}"
+        state: present
+      loop: "{{ monitoring_servers }}"
+      no_log: true
+      notify: Restart SNMP
+
+    - name: Apply configuration changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure SNMP is running and enabled at boot
+      ansible.builtin.systemd_service:
+        name: snmpd
+        state: started
+        enabled: true
+
+    - name: Verify SNMP service status
+      ansible.builtin.command: systemctl is-active snmpd
+      register: snmp_status
+      changed_when: false
+      failed_when: snmp_status.stdout | trim != "active"
+
+    - name: Verify SNMP is listening on UDP port 161
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -lun | awk '$5 ~ /:161$/ { found=1 } END { exit !found }'
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "SNMP service is installed, running, and listening on {{ inventory_hostname }}"
+
+  handlers:
+    - name: Restart SNMP
+      ansible.builtin.systemd_service:
+        name: snmpd
+        state: restarted
