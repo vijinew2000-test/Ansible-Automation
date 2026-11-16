@@ -1,0 +1,19 @@
+project       = "example-gcp-project"
+region        = "us-central1"
+zone          = "us-central1-a"
+instance_name = "terraform-ubuntu-vm"
+machine_type  = "e2-micro"
+image         = "ubuntu-os-cloud/ubuntu-2204-lts"
+network       = "default"
+username      = "devops"
+
+# Paste only a public key. Never place a private key here.
+ssh_public_key = "ssh-ed25519 AAAA_REPLACE_WITH_PUBLIC_KEY user@example"
+
+boot_disk_size_gb = 20
+assign_public_ip   = false
+network_tags       = []
+
+# Prefer Application Default Credentials. Set this only when an approved
+# service-account JSON key file is required:
+# credentials_file = "/secure/path/service-account.json"
