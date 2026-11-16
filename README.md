@@ -653,3 +653,14 @@ Current example:
 - [SNMP installation and configuration on Ubuntu VDIs](use-cases/monitoring/snmp-installation-ubuntu/README.md) — installs Ubuntu SNMP packages, configures approved monitoring-server access, restarts and enables `snmpd`, and verifies that the service is active.
 
 The committed monitoring addresses use documentation-only TEST-NET values. Supply real addresses and the protected SNMP community through Unity inventory, Ansible Vault, or an approved secret manager.
+
+
+## 22. Terraform infrastructure use cases
+
+Terraform examples provide repeatable, reviewed infrastructure provisioning.
+
+Current example:
+
+- [GCP VM provisioning with Terraform](use-cases/terraform/gcp-vm-provisioning/README.md) — provisions an Ubuntu Compute Engine VM with configurable sizing, networking, SSH public-key access, and optional public IP.
+
+The example avoids password-based startup scripts because passwords can be exposed through Terraform state and instance metadata. Terraform state, environment variable files, service-account keys, and private SSH keys are excluded from Git.
